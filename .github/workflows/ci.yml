@@ -33,4 +33,4 @@ jobs:
       - name: CLI smoke test
         run: python -m signalproof --version
       - name: Validate wheel build
-        run: python -m build --wheel --no-isolation
+        run: python -m build --wheel
