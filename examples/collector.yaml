@@ -1,0 +1,27 @@
+receivers:
+  otlp: {}
+  hostmetrics: {}
+processors:
+  memory_limiter: {}
+  batch: {}
+  filter/drop_secrets: {}
+exporters:
+  otlphttp/siem: {}
+  otlphttp/metrics: {}
+  debug: {}
+connectors:
+  forward: {}
+service:
+  pipelines:
+    logs/ingest:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [forward]
+    logs/security:
+      receivers: [forward]
+      processors: [batch]
+      exporters: [otlphttp/siem]
+    metrics/infra:
+      receivers: [hostmetrics]
+      processors: [batch]
+      exporters: [otlphttp/metrics]

@@ -1,0 +1,90 @@
+name: Bootstrap Release v0.1.0 (CI-gated)
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: signalproof-bootstrap-v0.1.0
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip when v0.1.0 is already published
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view 'v0.1.0' --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'skip=true' >> "$GITHUB_OUTPUT"
+            echo 'Release already published; no action required.'
+          else
+            echo 'skip=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Checkout the exact tested commit
+        if: steps.existing.outputs.skip == 'false'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Setup Python
+        if: steps.existing.outputs.skip == 'false'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Require current main, successful CI, matching version
+        if: steps.existing.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          TESTED_RUN_ID: ${{ github.event.workflow_run.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$MAIN_SHA" = "$TESTED_SHA" || { echo 'Outdated CI: commit is not current main'; exit 1; }
+          test "$(git rev-parse HEAD)" = "$TESTED_SHA" || { echo 'Wrong checkout commit'; exit 1; }
+          RUN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TESTED_RUN_ID" --jq '.head_sha')"
+          RUN_RESULT="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$TESTED_RUN_ID" --jq '.conclusion')"
+          test "$RUN_SHA" = "$TESTED_SHA" && test "$RUN_RESULT" = 'success'
+          VERSION="$(PYTHONPATH=src python -c 'from signalproof import __version__; print(__version__)')"
+          test "$VERSION" = '0.1.0' || { echo 'Only v0.1.0 can be bootstrapped'; exit 1; }
+      - name: Install, test, and package
+        if: steps.existing.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -e '.[dev]'
+          python -m compileall -q src tests
+          python -m pytest -q
+          python -m build --wheel --no-isolation
+          git archive --format=zip --prefix=signalproof-telemetry/ HEAD > dist/signalproof-telemetry-v0.1.0.zip
+          (cd dist && sha256sum signalproof-telemetry-v0.1.0.zip > signalproof-telemetry-v0.1.0.zip.sha256)
+      - name: Check for conflicting tag and publish release
+        if: steps.existing.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.1.0" --silent >/dev/null 2>&1; then
+            echo 'Tag exists: manual inspection required'; exit 1
+          fi
+          gh release create 'v0.1.0' \
+            dist/signalproof-telemetry-v0.1.0.zip \
+            dist/signalproof-telemetry-v0.1.0.zip.sha256 \
+            dist/*.whl \
+            --target "$TESTED_SHA" \
+            --title 'SignalProof Telemetry v0.1.0' \
+            --notes-file RELEASE_NOTES.md

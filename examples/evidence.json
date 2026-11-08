@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "receipts": [
+    {
+      "asset": "gateway-prod",
+      "signal": "logs",
+      "pipeline": "logs/security",
+      "exporter": "otlphttp/siem",
+      "observed_at": "2026-11-08T14:00:00Z",
+      "received_at": "2026-11-08T14:00:05Z",
+      "count": 25
+    },
+    {
+      "asset": "infra-01",
+      "signal": "metrics",
+      "pipeline": "metrics/infra",
+      "exporter": "otlphttp/metrics",
+      "observed_at": "2026-11-08T14:00:00Z",
+      "received_at": "2026-11-08T14:00:07Z",
+      "count": 12
+    }
+  ]
+}

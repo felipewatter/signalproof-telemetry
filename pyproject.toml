@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77,<90", "wheel>=0.45,<1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "signalproof-telemetry"
+version = "0.1.0"
+description = "Offline security telemetry coverage and delivery assurance for OpenTelemetry Collector pipelines"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "Felipe Watter"}]
+license = "MIT"
+keywords = ["security", "opentelemetry", "observability", "siem", "telemetry", "devsecops"]
+classifiers = ["Programming Language :: Python :: 3", "Environment :: Console", "Topic :: Security", "Topic :: System :: Monitoring"]
+dependencies = ["PyYAML>=6.0.3,<7"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "build>=1.2,<2", "ruff>=0.14,<1"]
+
+[project.scripts]
+signalproof = "signalproof.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S311"]

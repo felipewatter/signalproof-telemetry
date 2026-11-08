@@ -1,0 +1,81 @@
+name: Release (manual, CI-gated)
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag matching package version (e.g. v0.1.0)
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: signalproof-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Preflight — tag, version, main HEAD and successful CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          EXPECTED_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Tag inválida'; exit 1; }
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA" || { echo 'Checkout inconsistente'; exit 1; }
+          CURRENT_MAIN="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$CURRENT_MAIN" = "$EXPECTED_SHA" || { echo 'Release exige HEAD atual do main'; exit 1; }
+          PACKAGE_VERSION="$(PYTHONPATH=src python -c 'from signalproof import __version__; print(__version__)')"
+          test "$REQUESTED_TAG" = "v$PACKAGE_VERSION" || { echo 'Tag não coincide com package'; exit 1; }
+          if gh release view "$REQUESTED_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Release já existe'; exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REQUESTED_TAG" --silent >/dev/null 2>&1; then
+            echo 'Tag já existe: requer verificação manual'; exit 1
+          fi
+          PASSED="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$EXPECTED_SHA&status=completed&per_page=100" --jq '[.workflow_runs[] | select(.event == "push" and .conclusion == "success")] | length')"
+          test "$PASSED" -gt 0 || { echo 'CI de push não aprovado neste commit'; exit 1; }
+      - name: Validate package and tests
+        run: |
+          python -m pip install -e '.[dev]'
+          python -m compileall -q src tests
+          python -m pytest -q
+          python -m build --wheel --no-isolation
+      - name: Package source archive with digest
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=zip --prefix=signalproof-telemetry/ HEAD > "dist/signalproof-telemetry-$REQUESTED_TAG.zip"
+          (cd dist && sha256sum "signalproof-telemetry-$REQUESTED_TAG.zip" > "signalproof-telemetry-$REQUESTED_TAG.zip.sha256")
+      - name: Publish release only after successful validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          EXPECTED_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$REQUESTED_TAG" \
+            "dist/signalproof-telemetry-$REQUESTED_TAG.zip" \
+            "dist/signalproof-telemetry-$REQUESTED_TAG.zip.sha256" \
+            dist/*.whl \
+            --target "$EXPECTED_SHA" \
+            --title "SignalProof Telemetry $REQUESTED_TAG" \
+            --notes-file RELEASE_NOTES.md
